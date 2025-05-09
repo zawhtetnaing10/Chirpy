@@ -59,6 +59,32 @@ func (cfg *ApiConfig) MiddlewareMetricsInc(handler http.Handler) http.Handler {
 	})
 }
 
+// Get All Chirps
+func (cfg *ApiConfig) GetAllChirps(writer http.ResponseWriter, request *http.Request) {
+	// Get chirps from DB
+	chirps, err := cfg.Db.GetAllChirps(request.Context())
+	if err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+
+	// Convert to chirp response
+	chirpsForResponse := []ChirpResponse{}
+	for i := range chirps {
+		chirpResponse := ChirpResponse{
+			ID:        chirps[i].ID,
+			CreatedAt: chirps[i].CreatedAt,
+			UpdatedAt: chirps[i].UpdatedAt,
+			Body:      chirps[i].Body,
+			UserID:    chirps[i].UserID,
+		}
+		chirpsForResponse = append(chirpsForResponse, chirpResponse)
+	}
+
+	// If successful, send the response
+	respondWithJSON(writer, constants.SUCCESS, chirpsForResponse)
+}
+
 // Create Chirp
 func (cfg *ApiConfig) CreateChirp(writer http.ResponseWriter, request *http.Request) {
 	// Read the request

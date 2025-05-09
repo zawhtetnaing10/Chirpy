@@ -12,4 +12,5 @@ CREATE TABLE chirps(
 );
 
 -- +goose Down
-DROP TABLE chirps;
+DROP TABLE chirps
+ORDER BY created_at;

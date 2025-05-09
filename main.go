@@ -47,6 +47,7 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.ResetHandler)
 	mux.HandleFunc("POST /api/users", apiCfg.CreateUser)
 	mux.HandleFunc("POST /api/chirps", apiCfg.CreateChirp)
+	mux.HandleFunc("GET /api/chirps", apiCfg.GetAllChirps)
 
 	// New http server
 	server := http.Server{
