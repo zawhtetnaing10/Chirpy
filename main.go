@@ -4,12 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
+
+	"github.com/zawhtetnaing10/Chirpy/constants"
+	"github.com/zawhtetnaing10/Chirpy/internal/database"
+
+	"database/sql"
+	"os"
+
+	"log"
+
+	_ "github.com/lib/pq"
 )
 
 // In memory data
 type apiConfig struct {
 	fileServerHits atomic.Int32
+	db             *database.Queries
 }
 
 // Middleware to increase request count
@@ -23,7 +35,7 @@ func (cfg *apiConfig) middlewareMetricsInc(handler http.Handler) http.Handler {
 // Metrics Handler
 func (cfg *apiConfig) metricsHandler(writer http.ResponseWriter, request *http.Request) {
 	// Set content type in header
-	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set(constants.CONTENT_TYPE, constants.TEXT_PLAIN)
 	// Set status code
 	writer.WriteHeader(http.StatusOK)
 
@@ -50,7 +62,6 @@ func (cfg *apiConfig) resetHandler(writer http.ResponseWriter, request *http.Req
 }
 
 // Validate chirp handler
-// TODO: - We have things to fix here.
 func validateChirpHandler(writer http.ResponseWriter, request *http.Request) {
 	// Read input param
 	type parameters struct {
@@ -62,62 +73,99 @@ func validateChirpHandler(writer http.ResponseWriter, request *http.Request) {
 
 	// Prepare response body
 	type returnVals struct {
-		Valid bool `json:"valid"`
-	}
-	// Prepare error body
-	type errorVals struct {
-		Error string `json:"error"`
+		CleanedBody string `json:"cleaned_body"`
 	}
 
 	// Check for parsing errors
 	if err := decoder.Decode(&params); err != nil {
-		inputReadErr := errorVals{
-			Error: "Something went wrong",
-		}
-		inputReadErrData, err := json.Marshal(inputReadErr)
-		if err != nil {
-			writer.WriteHeader(500)
-			return
-		}
-		writer.WriteHeader(500)
-		writer.Write(inputReadErrData)
+		respondWithError(writer, constants.SERVER_ERROR, "Something went wrong")
 		return
 	}
 
 	// Take care of a case where length > 140
 	if len(params.Body) > 140 {
-		tooLongError := errorVals{
-			Error: "Chirp is too long",
-		}
-		errData, err := json.Marshal(tooLongError)
-		if err != nil {
-			writer.WriteHeader(500)
-			return
-		}
-		writer.WriteHeader(400)
-		writer.Write(errData)
+		respondWithError(writer, constants.BAD_REQUEST, "Chirp is too long")
 		return
 	}
+
+	// Censor the profane words
+	profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
+	censoredWord := "****"
+	words := strings.Split(params.Body, " ")
+	for i := 0; i < len(words); i++ {
+		for _, profaneWord := range profaneWords {
+			if strings.ToLower(words[i]) == profaneWord {
+				words[i] = censoredWord
+			}
+		}
+	}
+	cleanedOutput := strings.Join(words, " ")
 
 	// The request is valid.
 	validRes := returnVals{
-		Valid: true,
+		CleanedBody: cleanedOutput,
 	}
-	successData, err := json.Marshal(validRes)
+	respondWithJSON(writer, constants.SUCCESS, validRes)
+}
+
+// / Helper function to respond with json
+func respondWithJSON(writer http.ResponseWriter, code int, payload interface{}) {
+	payloadData, err := json.Marshal(payload)
 	if err != nil {
-		writer.WriteHeader(500)
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
 		return
 	}
-	writer.WriteHeader(200)
-	writer.Write(successData)
+
+	writer.Header().Set(constants.CONTENT_TYPE, constants.APPLICATION_JSON)
+	writer.WriteHeader(code)
+	writer.Write(payloadData)
+}
+
+// / Helper function to respond with error
+func respondWithError(writer http.ResponseWriter, code int, msg string) {
+	/// Set up error struct
+	type errorVals struct {
+		Error string `json:"error"`
+	}
+	/// Construct error struct
+	errStruct := errorVals{
+		Error: msg,
+	}
+
+	/// Encode the error struct to data
+	errData, err := json.Marshal(errStruct)
+	if err != nil {
+		/// If Encoding fails, sent the server error as plain text
+		writer.Header().Set(constants.CONTENT_TYPE, constants.TEXT_PLAIN)
+		writer.WriteHeader(500)
+		writer.Write([]byte(err.Error()))
+		return
+	}
+
+	/// Write the data
+	writer.Header().Set(constants.CONTENT_TYPE, constants.APPLICATION_JSON)
+	writer.WriteHeader(code)
+	writer.Write(errData)
 }
 
 func main() {
+
+	// Get dburl from env
+	dbURL := os.Getenv("DB_URL")
+
+	// Open DB
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
 	// New http server mux
 	mux := http.NewServeMux()
 
 	// Config
-	apiCfg := apiConfig{}
+	apiCfg := apiConfig{
+		db: database.New(db),
+	}
 	apiCfg.fileServerHits.Store(0)
 
 	// Set up file server with mux
