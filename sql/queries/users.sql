@@ -7,3 +7,11 @@ VALUES(
     $1
 )
 RETURNING *;
+
+-- name: GetUserById :one
+SELECT * FROM users
+WHERE id = $1
+LIMIT 1;
+
+-- name: DeleteAllUsers :exec
+DELETE FROM users;
