@@ -1,11 +1,16 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"net/http"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/zawhtetnaing10/Chirpy/constants"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -92,4 +97,30 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("error parsing user id : %w", parseErr)
 	}
 	return userUuid, nil
+}
+
+// Get Bearer Token
+func GetBearerToken(headers http.Header) (string, error) {
+	// Get bearer token
+	authHeader := headers.Get(constants.AUTHORIZATION)
+	// Auth token must not be empty
+	if authHeader == "" {
+		return "", errors.New("the auth token must not be empty")
+	}
+
+	// Remove prefix Bearer
+	tokenString := strings.TrimPrefix(authHeader, constants.BEAERER)
+
+	// user sends in only Bearer with no token string
+	if tokenString == authHeader {
+		return "", errors.New("invalid bearer token format. The correct format is Bearer {token}")
+	}
+
+	// Check for empty token
+	tokenString = strings.TrimSpace(tokenString)
+	if tokenString == "" {
+		return "", errors.New("the token string must not be empty")
+	}
+
+	return tokenString, nil
 }

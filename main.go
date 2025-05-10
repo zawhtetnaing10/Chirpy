@@ -32,8 +32,9 @@ func main() {
 
 	// Config
 	apiCfg := handlers.ApiConfig{
-		Db:       database.New(db),
-		Platform: os.Getenv("PLATFORM"),
+		Db:          database.New(db),
+		Platform:    os.Getenv("PLATFORM"),
+		TokenSecret: os.Getenv("TOKEN_SECRET"),
 	}
 	apiCfg.FileServerHits.Store(0)
 

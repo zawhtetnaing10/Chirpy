@@ -2,6 +2,7 @@ package constants
 
 // Header Keys
 const CONTENT_TYPE = "Content-Type"
+const AUTHORIZATION = "Authorization"
 
 // Header Types
 const APPLICATION_JSON = "application/json"
@@ -21,3 +22,8 @@ const CANNOT_DELETE_USERS_IN_PROD = "You cannot delete users in production envir
 
 // Platforms
 const DEV = "dev"
+
+const BEAERER = "Bearer "
+
+// 1 hour in seconds
+const ONE_HOUR_IN_SECONDS = 3600

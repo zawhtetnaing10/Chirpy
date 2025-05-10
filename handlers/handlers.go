@@ -22,7 +22,17 @@ import (
 type ApiConfig struct {
 	Platform       string
 	FileServerHits atomic.Int32
+	TokenSecret    string
 	Db             *database.Queries
+}
+
+// Response for login
+type LoginResponse struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 // User response
@@ -120,8 +130,21 @@ func (cfg *ApiConfig) GetAllChirps(writer http.ResponseWriter, request *http.Req
 func (cfg *ApiConfig) CreateChirp(writer http.ResponseWriter, request *http.Request) {
 	// Read the request
 	type requestParameters struct {
-		Body   string `json:"body"`
-		UserId string `json:"user_id"`
+		Body string `json:"body"`
+	}
+
+	// Get Auth token from header
+	authToken, authTokenErr := auth.GetBearerToken(request.Header)
+	if authTokenErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, authTokenErr.Error())
+		return
+	}
+
+	// Validate token and get the user_id
+	userId, validateJWTErr := auth.ValidateJWT(authToken, cfg.TokenSecret)
+	if validateJWTErr != nil {
+		respondWithError(writer, constants.UNAUTHORIZED, validateJWTErr.Error())
+		return
 	}
 
 	// Parse the request
@@ -132,13 +155,8 @@ func (cfg *ApiConfig) CreateChirp(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	parsedUserId, userIdErr := uuid.Parse(requestParams.UserId)
-	if userIdErr != nil {
-		respondWithError(writer, constants.SERVER_ERROR, userIdErr.Error())
-		return
-	}
 	// Check if the user exists in db
-	_, userErr := cfg.Db.GetUserById(request.Context(), parsedUserId)
+	_, userErr := cfg.Db.GetUserById(request.Context(), userId)
 	if userErr != nil {
 		respondWithError(writer, constants.SERVER_ERROR, "There's no user with the given id.")
 		return
@@ -164,17 +182,11 @@ func (cfg *ApiConfig) CreateChirp(writer http.ResponseWriter, request *http.Requ
 	}
 	cleanedBody := strings.Join(words, " ")
 
-	// Parse the uuid from input
-	parsedUUID, uuidErr := uuid.Parse(requestParams.UserId)
-	if uuidErr != nil {
-		respondWithError(writer, constants.SERVER_ERROR, uuidErr.Error())
-		return
-	}
 	// Insert the chirp into DB
 	createChirpParams := database.CreateChirpParams{
 		Body: cleanedBody,
 		UserID: uuid.NullUUID{
-			UUID:  parsedUUID,
+			UUID:  userId,
 			Valid: true,
 		},
 	}
@@ -202,8 +214,9 @@ func (cfg *ApiConfig) Login(writer http.ResponseWriter, request *http.Request) {
 	// Read the request
 	// Read input param
 	type requestParameters struct {
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Password         string `json:"password"`
+		Email            string `json:"email"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
 	}
 
 	// Decode the request
@@ -227,14 +240,32 @@ func (cfg *ApiConfig) Login(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	// Set up expire time for JWT.
+	// If it isn't provided or is more than 1 hour, set it as 1 hour
+	// Otherwise set the provided value as seconds
+	var expireTime time.Duration
+	if requestParams.ExpiresInSeconds == 0 || requestParams.ExpiresInSeconds > constants.ONE_HOUR_IN_SECONDS {
+		expireTime = 1 * time.Hour
+	} else {
+		expireTime = time.Duration(requestParams.ExpiresInSeconds)
+	}
+
+	// Make JWT Token
+	authToken, tokenErr := auth.MakeJWT(user.ID, cfg.TokenSecret, expireTime)
+	if tokenErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, tokenErr.Error())
+		return
+	}
+
 	// Successful. Return the user
-	userResponse := UserResponse{
+	loginResponse := LoginResponse{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Token:     authToken,
 	}
-	respondWithJSON(writer, constants.SUCCESS, userResponse)
+	respondWithJSON(writer, constants.SUCCESS, loginResponse)
 }
 
 // Create user
