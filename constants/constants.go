@@ -14,6 +14,7 @@ const SERVER_ERROR = 500
 const BAD_REQUEST = 400
 const FORBIDDEN = 403
 const NOT_FOUND = 404
+const UNAUTHORIZED = 401
 
 // Messages
 const CANNOT_DELETE_USERS_IN_PROD = "You cannot delete users in production environment"

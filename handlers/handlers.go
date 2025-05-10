@@ -14,6 +14,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/zawhtetnaing10/Chirpy/constants"
 
+	"github.com/zawhtetnaing10/Chirpy/internal/auth"
 	"github.com/zawhtetnaing10/Chirpy/internal/database"
 )
 
@@ -196,12 +197,53 @@ func (cfg *ApiConfig) CreateChirp(writer http.ResponseWriter, request *http.Requ
 	respondWithJSON(writer, constants.CREATED, chirpResponse)
 }
 
+// Login
+func (cfg *ApiConfig) Login(writer http.ResponseWriter, request *http.Request) {
+	// Read the request
+	// Read input param
+	type requestParameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	// Decode the request
+	decoder := json.NewDecoder(request.Body)
+	requestParams := requestParameters{}
+	if err := decoder.Decode(&requestParams); err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+
+	// Verify the password
+	user, err := cfg.Db.GetUserByEmail(request.Context(), requestParams.Email)
+	if err != nil {
+		respondWithError(writer, constants.NOT_FOUND, "No account found for this email address. Please try again")
+		return
+	}
+
+	// Check password
+	if err := auth.CheckPasswordHash(user.HashedPassword, requestParams.Password); err != nil {
+		respondWithError(writer, constants.UNAUTHORIZED, "Incorrect password. Please try again.")
+		return
+	}
+
+	// Successful. Return the user
+	userResponse := UserResponse{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	respondWithJSON(writer, constants.SUCCESS, userResponse)
+}
+
 // Create user
 func (cfg *ApiConfig) CreateUser(writer http.ResponseWriter, request *http.Request) {
 	// Read the request
 	// Read input param
 	type requestParameters struct {
-		Email string `json:"email"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	// Get the email from request
@@ -212,13 +254,24 @@ func (cfg *ApiConfig) CreateUser(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
+	// Get the password from request and hash it
+	hashedPass, hashErr := auth.HashPassword(requestParams.Password)
+	if hashErr != nil {
+		respondWithError(writer, constants.BAD_REQUEST, hashErr.Error())
+		return
+	}
+
 	// Insert user into db
-	insertedUser, userInsertErr := cfg.Db.CreateUser(request.Context(), requestParams.Email)
+	createUserParams := database.CreateUserParams{
+		Email:          requestParams.Email,
+		HashedPassword: hashedPass,
+	}
+	insertedUser, userInsertErr := cfg.Db.CreateUser(request.Context(), createUserParams)
 	if userInsertErr != nil {
 		respondWithError(writer, constants.SERVER_ERROR, userInsertErr.Error())
 		return
 	}
-	// Set up user response
+	// Set up user response. User response will not include password
 	userResponse := UserResponse{
 		ID:        insertedUser.ID,
 		CreatedAt: insertedUser.CreatedAt,
