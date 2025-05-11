@@ -25,6 +25,7 @@ type ApiConfig struct {
 	FileServerHits atomic.Int32
 	TokenSecret    string
 	Db             *database.Queries
+	PolkaKey       string
 }
 
 // Requests
@@ -128,6 +129,20 @@ func (cfg *ApiConfig) getUserIdFromAuthToken(header http.Header) (uuid.UUID, err
 
 // Upgrade Chirpy Red
 func (cfg *ApiConfig) UpgradeChirpyRed(writer http.ResponseWriter, request *http.Request) {
+
+	// Extract api key
+	apiKey, apiKeyErr := auth.GetApiKey(request.Header)
+	if apiKeyErr != nil {
+		respondWithError(writer, constants.UNAUTHORIZED, apiKeyErr.Error())
+		return
+	}
+
+	// Check if api keys are the same
+	if apiKey != cfg.PolkaKey {
+		respondWithError(writer, constants.UNAUTHORIZED, "Invalid api key.")
+		return
+	}
+
 	// Parse the request
 	decoder := json.NewDecoder(request.Body)
 	requestParams := UpgradeChirpyRedRequest{}

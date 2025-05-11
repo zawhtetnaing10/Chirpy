@@ -35,6 +35,7 @@ func main() {
 		Db:          database.New(db),
 		Platform:    os.Getenv("PLATFORM"),
 		TokenSecret: os.Getenv("TOKEN_SECRET"),
+		PolkaKey:    os.Getenv("POLKA_KEY"),
 	}
 	apiCfg.FileServerHits.Store(0)
 

@@ -25,6 +25,7 @@ const CANNOT_DELETE_USERS_IN_PROD = "You cannot delete users in production envir
 const DEV = "dev"
 
 const BEAERER = "Bearer "
+const API_KEY = "ApiKey "
 
 // 1 hour in seconds
 const ONE_HOUR_IN_SECONDS = 3600

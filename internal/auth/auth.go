@@ -101,6 +101,32 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	return userUuid, nil
 }
 
+// Get Api Key
+func GetApiKey(headers http.Header) (string, error) {
+	// Get api key
+	authHeader := headers.Get(constants.AUTHORIZATION)
+	// Api Key must not be empty
+	if authHeader == "" {
+		return "", errors.New("the api key must not be empty")
+	}
+
+	// Remove prefix ApiKey
+	apiKey := strings.TrimPrefix(authHeader, constants.API_KEY)
+
+	// user sends in only ApiKey with no value
+	if apiKey == authHeader {
+		return "", errors.New("invalid api key format. The correct format is ApiKey {apiKey}")
+	}
+
+	// Check for empty token
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return "", errors.New("the api key must not be empty")
+	}
+
+	return apiKey, nil
+}
+
 // Get Bearer Token
 func GetBearerToken(headers http.Header) (string, error) {
 	// Get bearer token
