@@ -11,6 +11,7 @@ const TEXT_PLAIN = "text/plain; charset=utf-8"
 // Http Codes
 const SUCCESS = 200
 const CREATED = 201
+const NO_CONTENT = 204
 const SERVER_ERROR = 500
 const BAD_REQUEST = 400
 const FORBIDDEN = 403

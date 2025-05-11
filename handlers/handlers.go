@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/zawhtetnaing10/Chirpy/constants"
+	"github.com/zawhtetnaing10/Chirpy/utils"
 
 	"github.com/zawhtetnaing10/Chirpy/internal/auth"
 	"github.com/zawhtetnaing10/Chirpy/internal/database"
@@ -26,13 +27,25 @@ type ApiConfig struct {
 	Db             *database.Queries
 }
 
+// Requests
+type EmailAndPasswordRequest struct {
+	Password string `json:"password"`
+	Email    string `json:"email"`
+}
+
+// Refresh token response
+type RefreshTokenResponse struct {
+	Token string `json:"token"`
+}
+
 // Response for login
 type LoginResponse struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 // User response
@@ -68,6 +81,36 @@ func (cfg *ApiConfig) MiddlewareMetricsInc(handler http.Handler) http.Handler {
 		cfg.FileServerHits.Add(1)
 		handler.ServeHTTP(writer, request)
 	})
+}
+
+// Get email and password from request
+func getEmailAndPasswordFromRequest(request *http.Request) (EmailAndPasswordRequest, error) {
+	// Get the email from request
+	decoder := json.NewDecoder(request.Body)
+	requestParams := EmailAndPasswordRequest{}
+	if err := decoder.Decode(&requestParams); err != nil {
+		return EmailAndPasswordRequest{}, err
+	}
+
+	return requestParams, nil
+}
+
+// Get user id from auth token
+func (cfg *ApiConfig) getUserIdFromAuthToken(header http.Header) (uuid.UUID, error) {
+	// Get the auth token from header
+	authToken, authTokenErr := auth.GetBearerToken(header)
+	if authTokenErr != nil {
+		return uuid.Nil, authTokenErr
+	}
+
+	// Validate token and get the user_id
+	userId, validateJWTErr := auth.ValidateJWT(authToken, cfg.TokenSecret)
+	if validateJWTErr != nil {
+		return uuid.Nil, validateJWTErr
+	}
+
+	// If successful return the user id
+	return userId, nil
 }
 
 // Get Chirp
@@ -209,14 +252,87 @@ func (cfg *ApiConfig) CreateChirp(writer http.ResponseWriter, request *http.Requ
 	respondWithJSON(writer, constants.CREATED, chirpResponse)
 }
 
+// Revoke RefreshToken
+func (cfg *ApiConfig) RevokeRefreshToken(writer http.ResponseWriter, request *http.Request) {
+	// Get refresh token from header
+	refreshToken, err := auth.GetBearerToken(request.Header)
+	if err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+
+	// Check if refresh token exists
+	refreshTokenFromDb, refreshTokenErr := cfg.Db.GetRefreshToken(request.Context(), refreshToken)
+	// Refresh token doesn't exist. Return 204 to avoid leaking info
+	if refreshTokenErr != nil {
+		writer.WriteHeader(constants.NO_CONTENT)
+		return
+	}
+	// Refresh token is already revoked. Return 204 to avoid leaking info
+	if refreshTokenFromDb.RevokedAt.Valid {
+		writer.WriteHeader(constants.NO_CONTENT)
+		return
+	}
+
+	// Update the db
+	if err := cfg.Db.RevokeToken(request.Context(), refreshTokenFromDb.Token); err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+
+	// Successful. return an empty body.
+	writer.WriteHeader(constants.NO_CONTENT)
+}
+
+// Refresh Token
+func (cfg *ApiConfig) RefreshToken(writer http.ResponseWriter, request *http.Request) {
+	// Get refresh token from header
+	refreshToken, err := auth.GetBearerToken(request.Header)
+	if err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+
+	// Check if refresh token exists
+	refreshTokenFromDb, refreshTokenErr := cfg.Db.GetRefreshToken(request.Context(), refreshToken)
+	if refreshTokenErr != nil {
+		respondWithError(writer, constants.UNAUTHORIZED, "Invalid refresh token")
+		return
+	}
+
+	// Check if refresh token is already revoked
+	if refreshTokenFromDb.RevokedAt.Valid {
+		respondWithError(writer, constants.UNAUTHORIZED, "Refresh token is no longer valid.")
+		return
+	}
+
+	// Check if refresh token is expired
+	if time.Now().After(refreshTokenFromDb.ExpiresAt) {
+		respondWithError(writer, constants.UNAUTHORIZED, "Refresh token has been expired.")
+		return
+	}
+
+	// Make new jwt token
+	newJWTToken, jwtErr := auth.MakeJWT(refreshTokenFromDb.UserID, cfg.TokenSecret, utils.GetJWTTokenExpireTime())
+	if jwtErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, jwtErr.Error())
+		return
+	}
+
+	// Return the new jwt token
+	refreshTokenResponse := RefreshTokenResponse{
+		Token: newJWTToken,
+	}
+	respondWithJSON(writer, constants.SUCCESS, refreshTokenResponse)
+}
+
 // Login
 func (cfg *ApiConfig) Login(writer http.ResponseWriter, request *http.Request) {
 	// Read the request
 	// Read input param
 	type requestParameters struct {
-		Password         string `json:"password"`
-		Email            string `json:"email"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	// Decode the request
@@ -240,30 +356,38 @@ func (cfg *ApiConfig) Login(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	// Set up expire time for JWT.
-	// If it isn't provided or is more than 1 hour, set it as 1 hour
-	// Otherwise set the provided value as seconds
-	var expireTime time.Duration
-	if requestParams.ExpiresInSeconds == 0 || requestParams.ExpiresInSeconds > constants.ONE_HOUR_IN_SECONDS {
-		expireTime = 1 * time.Hour
-	} else {
-		expireTime = time.Duration(requestParams.ExpiresInSeconds)
-	}
-
 	// Make JWT Token
-	authToken, tokenErr := auth.MakeJWT(user.ID, cfg.TokenSecret, expireTime)
+	authToken, tokenErr := auth.MakeJWT(user.ID, cfg.TokenSecret, utils.GetJWTTokenExpireTime())
 	if tokenErr != nil {
 		respondWithError(writer, constants.SERVER_ERROR, tokenErr.Error())
 		return
 	}
 
+	// Make Refresh Token
+	refreshToken, refreshTokenErr := auth.MakeRefreshToken()
+	if refreshTokenErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, refreshTokenErr.Error())
+		return
+	}
+	// Insert refresh token into DB
+	refreshTokenParams := database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    user.ID,
+		ExpiresAt: time.Now().Add(utils.GetRefreshTokenDuration()),
+	}
+	createdRefreshToken, refreshTokenInsertErr := cfg.Db.CreateRefreshToken(request.Context(), refreshTokenParams)
+	if refreshTokenInsertErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, refreshTokenInsertErr.Error())
+	}
+
 	// Successful. Return the user
 	loginResponse := LoginResponse{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
-		Token:     authToken,
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        authToken,
+		RefreshToken: createdRefreshToken.Token,
 	}
 	respondWithJSON(writer, constants.SUCCESS, loginResponse)
 }
@@ -312,6 +436,52 @@ func (cfg *ApiConfig) CreateUser(writer http.ResponseWriter, request *http.Reque
 
 	// User successfully created
 	respondWithJSON(writer, constants.CREATED, userResponse)
+}
+
+// Update user
+func (cfg *ApiConfig) UpdateUser(writer http.ResponseWriter, request *http.Request) {
+	// Validate token and get the user_id
+	userId, tokenErr := cfg.getUserIdFromAuthToken(request.Header)
+	if tokenErr != nil {
+		respondWithError(writer, constants.UNAUTHORIZED, tokenErr.Error())
+		return
+	}
+
+	// Get the email and password from request
+	emailAndPasswordReq, reqErr := getEmailAndPasswordFromRequest(request)
+	if reqErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, reqErr.Error())
+		return
+	}
+
+	// Hash the password given
+	hashedPass, hashErr := auth.HashPassword(emailAndPasswordReq.Password)
+	if hashErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, hashErr.Error())
+		return
+	}
+
+	// Update the email and password in Db
+	updateUserParams := database.UpdateUserParams{
+		ID:             userId,
+		Email:          emailAndPasswordReq.Email,
+		HashedPassword: hashedPass,
+	}
+	updatedUser, updateErr := cfg.Db.UpdateUser(request.Context(), updateUserParams)
+	if updateErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, updateErr.Error())
+		return
+	}
+
+	// Create the response and return
+	response := UserResponse{
+		ID:        updatedUser.ID,
+		CreatedAt: updatedUser.CreatedAt,
+		UpdatedAt: updatedUser.UpdatedAt,
+		Email:     updatedUser.Email,
+	}
+
+	respondWithJSON(writer, constants.SUCCESS, response)
 }
 
 // Metrics Handler
