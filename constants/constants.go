@@ -28,3 +28,6 @@ const BEAERER = "Bearer "
 
 // 1 hour in seconds
 const ONE_HOUR_IN_SECONDS = 3600
+
+// Upgrade chirpy red event
+const UPGRADE_CHIRPY_RED_EVENT = "user.upgraded"

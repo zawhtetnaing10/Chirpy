@@ -28,9 +28,20 @@ type ApiConfig struct {
 }
 
 // Requests
+// Email and Password
 type EmailAndPasswordRequest struct {
 	Password string `json:"password"`
 	Email    string `json:"email"`
+}
+
+// Upgrade Chirpy Red
+type UpgradeChirpyRedRequest struct {
+	Event string        `json:"event"`
+	Data  ChirpyRedData `json:"data"`
+}
+
+type ChirpyRedData struct {
+	UserId string `json:"user_id"`
 }
 
 // Refresh token response
@@ -46,14 +57,16 @@ type LoginResponse struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 // User response
 type UserResponse struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID          uuid.UUID `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Email       string    `json:"email"`
+	IsChirpyRed bool      `json:"is_chirpy_red"`
 }
 
 // Chirp Response
@@ -111,6 +124,46 @@ func (cfg *ApiConfig) getUserIdFromAuthToken(header http.Header) (uuid.UUID, err
 
 	// If successful return the user id
 	return userId, nil
+}
+
+// Upgrade Chirpy Red
+func (cfg *ApiConfig) UpgradeChirpyRed(writer http.ResponseWriter, request *http.Request) {
+	// Parse the request
+	decoder := json.NewDecoder(request.Body)
+	requestParams := UpgradeChirpyRedRequest{}
+	if reqErr := decoder.Decode(&requestParams); reqErr != nil {
+		respondWithError(writer, constants.BAD_REQUEST, reqErr.Error())
+		return
+	}
+
+	// If the event is not user.upgraded immediately return 204 no content
+	if requestParams.Event != constants.UPGRADE_CHIRPY_RED_EVENT {
+		writer.WriteHeader(constants.NO_CONTENT)
+		return
+	}
+
+	// Parse the uuid
+	parsedUserId, uuidErr := uuid.Parse(requestParams.Data.UserId)
+	if uuidErr != nil {
+		respondWithError(writer, constants.SERVER_ERROR, uuidErr.Error())
+		return
+	}
+
+	// Get User from Db
+	userInDb, getErr := cfg.Db.GetUserById(request.Context(), parsedUserId)
+	if getErr != nil {
+		respondWithError(writer, constants.NOT_FOUND, "User not found")
+		return
+	}
+
+	// The event is user.upgraded. Upgrade the user
+	if err := cfg.Db.UpgradeChirpyRed(request.Context(), userInDb.ID); err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+
+	// If everything is successful, return a no content response
+	writer.WriteHeader(constants.NO_CONTENT)
 }
 
 // Delete Chirp
@@ -429,6 +482,7 @@ func (cfg *ApiConfig) Login(writer http.ResponseWriter, request *http.Request) {
 		Email:        user.Email,
 		Token:        authToken,
 		RefreshToken: createdRefreshToken.Token,
+		IsChirpyRed:  user.IsChirpyRed.Bool,
 	}
 	respondWithJSON(writer, constants.SUCCESS, loginResponse)
 }
@@ -469,10 +523,11 @@ func (cfg *ApiConfig) CreateUser(writer http.ResponseWriter, request *http.Reque
 	}
 	// Set up user response. User response will not include password
 	userResponse := UserResponse{
-		ID:        insertedUser.ID,
-		CreatedAt: insertedUser.CreatedAt,
-		UpdatedAt: insertedUser.UpdatedAt,
-		Email:     insertedUser.Email,
+		ID:          insertedUser.ID,
+		CreatedAt:   insertedUser.CreatedAt,
+		UpdatedAt:   insertedUser.UpdatedAt,
+		Email:       insertedUser.Email,
+		IsChirpyRed: insertedUser.IsChirpyRed.Bool,
 	}
 
 	// User successfully created
@@ -516,10 +571,11 @@ func (cfg *ApiConfig) UpdateUser(writer http.ResponseWriter, request *http.Reque
 
 	// Create the response and return
 	response := UserResponse{
-		ID:        updatedUser.ID,
-		CreatedAt: updatedUser.CreatedAt,
-		UpdatedAt: updatedUser.UpdatedAt,
-		Email:     updatedUser.Email,
+		ID:          updatedUser.ID,
+		CreatedAt:   updatedUser.CreatedAt,
+		UpdatedAt:   updatedUser.UpdatedAt,
+		Email:       updatedUser.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed.Bool,
 	}
 
 	respondWithJSON(writer, constants.SUCCESS, response)
