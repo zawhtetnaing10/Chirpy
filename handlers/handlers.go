@@ -113,6 +113,47 @@ func (cfg *ApiConfig) getUserIdFromAuthToken(header http.Header) (uuid.UUID, err
 	return userId, nil
 }
 
+// Delete Chirp
+func (cfg *ApiConfig) DeleteChirp(writer http.ResponseWriter, request *http.Request) {
+
+	// Authorize User
+	userId, authTokenErr := cfg.getUserIdFromAuthToken(request.Header)
+	if authTokenErr != nil {
+		respondWithError(writer, constants.UNAUTHORIZED, authTokenErr.Error())
+		return
+	}
+
+	// Get chirp_id from request
+	chirpIdFromRequest := request.PathValue("chirp_id")
+	// Parse the chirp_id
+	chirpUUID, uuidErr := uuid.Parse(chirpIdFromRequest)
+	if uuidErr != nil {
+		respondWithError(writer, constants.BAD_REQUEST, uuidErr.Error())
+		return
+	}
+
+	// Get Chirp From Db
+	chirpFromDb, getChirpErr := cfg.Db.GetChirp(request.Context(), chirpUUID)
+	if getChirpErr != nil {
+		respondWithError(writer, constants.NOT_FOUND, "No chirps found.")
+		return
+	}
+
+	// Return FORBIDDEN error if the user is not the author
+	if chirpFromDb.UserID.UUID != userId {
+		respondWithError(writer, constants.FORBIDDEN, "Only the chirp's author is allowed to delete.")
+		return
+	}
+
+	// Delete the chirp
+	if err := cfg.Db.DeleteChirp(request.Context(), chirpFromDb.ID); err != nil {
+		respondWithError(writer, constants.SERVER_ERROR, err.Error())
+		return
+	}
+	// Respond with no content (successful)
+	writer.WriteHeader(constants.NO_CONTENT)
+}
+
 // Get Chirp
 func (cfg *ApiConfig) GetChirp(writer http.ResponseWriter, request *http.Request) {
 	// Get chirp_id from request
